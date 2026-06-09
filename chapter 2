@@ -1,0 +1,54 @@
+🌐 Chapter 2 – The Web’s Protocol Stack: A Bug Bounty Hunter’s Cheat Sheet
+Forget dry theory. Here’s how every layer of the Internet Protocol Suite can become an attack surface—and what you, as a hunter, should actively probe.
+
+1. DNS: The Phonebook You Can Poison
+Attack vector: DNS cache poisoning corrupts a resolver’s cache, silently redirecting users to your server.
+
+Recon gold: Use DNS records to expand the target’s attack surface.
+
+CNAME records → discover subdomains and third‑party services.
+
+MX records → map email infrastructure (useful later for spoofing tests).
+
+Practical tip: When testing a wildcard certificate, enumerate subdomains via brute‑force or certificate transparency logs; each CNAME is a potential takeover target.
+
+2. HTTP Methods You Should Never Trust
+Method	Why it matters to a hunter
+TRACE	If enabled, it echoes back the full request. Cross‑site scripting (XSS) can abuse TRACE to steal httpOnly cookies. Always check for it—disable or report it.
+GET used for state changes	Look for endpoints that modify data via GET (e.g., ?delete=1). These are prime for CSRF attacks.
+OPTIONS	Reveals which methods are allowed. A quick OPTIONS / can leak PUT/DELETE—possibly unauthenticated—leading to arbitrary file uploads or deletions.
+CONNECT	Rare, but if a proxy misconfiguration allows CONNECT, you might tunnel into internal networks.
+Quick hunt: Send OPTIONS to every interesting endpoint; note anything beyond GET/POST/HEAD.
+
+3. Cookies = Session Hijacking Playground
+A cookie is just a token that recreates state. Steal it → become the user.
+
+Where to look:
+
+Set-Cookie missing Secure flag → interceptable over HTTP.
+
+Missing HttpOnly → readable via injected JavaScript.
+
+Weak session generation → forgeable cookies (e.g., sequential IDs).
+
+Mindset shift: Every HTTP response that sets a cookie is an invitation to test whether you can impersonate someone else.
+
+4. Encryption (TLS) – Man‑in‑the‑Middle Is Still Possible If …
+The handshake negotiates ciphers. Look for:
+
+Support for weak ciphers (RC4, export‑grade) → downgrade attacks.
+
+Expired or mis‑matched certificates → user warnings that desensitise victims.
+
+Mixed content (HTTPS page loading HTTP scripts) → allows injection of malicious JavaScript.
+
+Practical check: Use tools like testssl.sh on a target’s domain; weak ciphers are a valid low‑severity finding.
+
+5. Reading HTTP Like a Hacker
+Train yourself to see every header and status code as a clue:
+
+Cache-Control: max-age=604800 → can the cached response be used to serve stale, sensitive data to another user?
+
+Content-Encoding: gzip → might be vulnerable to compression oracle attacks (BREACH).
+
+4xx vs 5xx → error messages often leak stack traces, server versions, or internal paths. Fuzz parameters until the server cries for help.
