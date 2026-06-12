@@ -1,0 +1,43 @@
+Chapter 5 – How Programmers Work: Exploiting the Development Pipeline
+A sloppy Software Development Life Cycle (SDLC) isn’t just a process problem—it’s an attack surface. Every shortcut a team takes leaves fingerprints you can find and exploit. Here’s how each phase can leak vulnerabilities and how you, as a hunter, can spot them.
+
+1. Design & Analysis → Missing Requirements = Missing Controls
+If a feature wasn’t security-reviewed at design time, it ships with guesswork. Look for endpoints that behave inconsistently—like a password reset that doesn’t invalidate sessions because nobody thought of it.
+
+Hunt tip: Map the feature’s logic; if it feels “bolted on,” test for privilege escalation. Design gaps often mean admin functions are reachable by lower-privileged users simply by guessing the URL.
+
+2. Writing Code → Source Control Leaks
+.git exposure: If /.git/HEAD or /.git/config is accessible, you can download the entire repository with tools like git-dumper. That gives you source code, hardcoded secrets, and commit history (which might show how old vulnerabilities were fixed—helping you reverse-engineer exploits).
+
+Pull requests & code reviews: When reviews are skipped, bugs slip through. A common evidence: no branch protection on public repos, or open pull requests with sensitive info in comments. Even in private repos, misconfigured CI/CD can expose logs.
+
+Hardcoded secrets: Developers often commit API keys, database passwords, or encryption keys. Search for TODO or FIXME as well—they point to unfinished code that probably isn’t secure.
+
+3. Pre-Release Testing → Test Environments Are Gold Mines
+Unsegregated staging: If you can reach a staging server (often staging.target.com or dev.target.com), it might have identical vulnerabilities but weaker security—no WAF, default passwords, verbose error messages.
+
+Improperly scrubbed data: Test databases cloned from production can contain real user emails, bcrypt hashes you can crack offline, or even plaintext passwords. Find a staging endpoint that leaks data; it’s often an easy PII bounty.
+
+Continuous integration leaks: Build logs in public CI services (e.g., Travis CI, GitHub Actions) may echo environment variables with secrets. Just scrolling through old build outputs can give you credentials.
+
+4. The Release Process → Deploy Gone Wrong
+Unreliable releases mean you might be hitting a mixed version of the application—an old endpoint still active, or a patch half-applied. This leads to partial-bypass scenarios.
+
+Database migration scripts: If migrations run with elevated permissions, and you can influence the migration through an injection, you can escalate privileges directly on the database.
+
+Revertibility fail: After a rollback, old vulnerable code runs again. Monitor version headers or JavaScript bundle fingerprints to detect if a known-vulnerable version has been restored. Strike while it’s back.
+
+Containerization misconfig: Exposed Docker sockets or Kubernetes API can give you control over the entire cluster. Look for port 2375 (Docker) or 10250 (Kubelet) without authentication.
+
+5. Post-Release Testing & Observation → Your Actions Are Being Logged (Or Not)
+Insufficient logging = blind spot. Attackers love targets that don’t monitor. But for you, test if errors reveal too much—verbose stack traces with framework versions, file paths, or database queries. That’s free recon.
+
+Error reporting services: If Rollbar or Sentry dashboards are unsecured, you can watch live errors, often containing session tokens or user input. Check /sentry/ or search for public DSN keys in JS files.
+
+Penetration testing artifacts: Sometimes the pentest report itself leaks—search for PDFs with "penetration test" and the company name. It’s a ready-made exploit guide.
+
+6. Dependency Management → Third-Party Weaknesses
+Outdated libraries are hunter’s bread and butter. Fingerprint the tech stack (Wappalyzer, response headers, JS bundles) and match against CVE databases. A single unpatched lodash or fastify can lead to RCE.
+
+Build tool chain: If the target uses Webpack and has source maps exposed (.js.map files), you get readable source. That reveals all module versions and custom logic, making vulnerability discovery trivial.
+
