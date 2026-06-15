@@ -1,0 +1,240 @@
+Chapter 9 – Compromising Authentication: Breaking the Login Gate
+Authentication is the first line of defense—and the most attacked. This chapter details every way an attacker can compromise login systems, and how to hunt those weaknesses yourself.
+
+1. The Two Flavors of HTTP Authentication
+Basic Auth: Browser encodes username:password in Base64 (Authorization header). Not encrypted; just encoded. Transmitted in plaintext over HTTP (without HTTPS it’s trivially intercepted).
+
+Digest Auth: Sends a hashed response instead of the password. More secure than Basic but still rarely used due to poor UX.
+
+Why modern sites avoid native HTTP auth:
+
+Ugly, unstyled browser prompt (not part of HTML).
+
+No password reset mechanism.
+
+No autocomplete/autofill support.
+
+No way to integrate MFA easily.
+
+Most sites instead use custom HTML login forms (<input type="email">, <input type="password">), sending credentials via POST and returning a 401 on failure.
+
+2. Brute‑Force Attacks – The Password Guessing Game
+Attackers don’t need to be clever; they just run scripts that try thousands of common passwords (from breach dumps) against a login endpoint.
+
+Common password list (still unchanged year after year):
+123456, password, qwerty, letmein, football, iloveyou…
+
+Hunter’s check: Test rate‑limiting. Send 10+ login attempts rapidly—does the server lock the account? Return CAPTCHA? Introduce delays? If not, brute‑force is possible.
+
+3. Mitigation #1: Use Third‑Party Authentication
+“The most secure authentication system is the one you don’t write yourself.”
+
+Integrate with OAuth 2.0 / OpenID Connect providers: Facebook, Google, GitHub, LinkedIn, etc.
+
+You never see, store, or handle the user’s password—the provider authenticates and gives you a token.
+
+Users benefit from single‑click login and strong provider security (2FA, anomaly detection).
+
+4. Mitigation #2: Single Sign‑On (SSO) for Business Users
+For enterprise apps, integrate with SSO identity providers: Okta, OneLogin, Centrify.
+
+Uses SAML (older, more complex) or OIDC.
+
+Centralized admin control, automatic employee offboarding.
+
+Hunting tip: SAML misconfigurations can lead to signature wrapping attacks; check XML canonicalization and certificate validation.
+
+5. Mitigation #3: Build Your Own – The Secure Way
+If you must roll your own auth, cover these bases:
+
+a. Username vs. Email
+
+Use email as the unique login identifier (it’s inherently unique). Add a separate display name only if users have a public profile.
+
+Never expose email addresses as display names—it invites spam and harassment.
+
+b. Email Validation
+
+Validate syntax: letters, digits, special chars, must contain @, domain must have a valid MX record (use DNS lookup).
+
+Only 100% reliable method: Send a verification email with a unique, randomly generated token. User clicks the link, token is verified server‑side.
+
+Don’t send marketing emails or grant full features until email is verified.
+
+Hunter’s note: Check if email‑only signup lets you skip verification and still access restricted functionality. That’s a logic flaw.
+
+c. Ban Disposable Emails
+
+Services like Mailinator, 10 Minute Mail, Guerrilla Mail generate temporary inboxes.
+
+If users abuse these (harassment, spam), use blacklists of disposable email domains to reject signups.
+
+Bug bounty angle: Can you sign up with a disposable domain? If the app claims to require verified email but lets you in anyway, that’s a valid finding.
+
+d. Secure Password Resets
+
+Send a time‑limited, single‑use reset token (30 minutes max).
+
+Expire after first use. If an attacker accesses the victim’s email later, stale links must not work.
+
+Hunting tip: Check if reset tokens can be reused, or if you can guess/brute‑force the token (e.g., short numeric, predictable sequence). Test if you can reset password without the email—maybe the endpoint leaks the token or doesn’t validate it.
+
+e. Password Complexity (Nudge, Don’t Force)
+
+Minimum length 8+ characters (length beats complexity).
+
+Encourage mix of character types but don’t enforce absurd rules that cause password reuse.
+
+Use client‑side strength estimators (e.g., password-strength-calculator) to give feedback without being a pain.
+
+f. Storing Passwords – Hashing and Salting
+Never store cleartext passwords. Use a slow, salted hashing algorithm.
+
+bcrypt (recommended): allows adjustable cost factor (rounds). The higher the rounds, the slower the hashing, making brute‑force infeasible.
+
+Argon2 is a modern alternative, winner of the Password Hashing Competition.
+
+Salting: Add a random value per user before hashing. Prevents rainbow table attacks. Store the salt alongside the hash.
+
+Hunter’s check: If you gain access to a database dump (e.g., via SQLi), check if hashes are unsalted MD5/SHA1. Those are crackable in seconds. Finding weak password storage is a critical severity bug.
+
+g. Multifactor Authentication (MFA) – The Ultimate Shield
+
+Requires a second factor: something you know (password) + something you have (smartphone authenticator app) or something you are (biometric).
+
+Even if credentials are leaked, account remains safe without the second factor.
+
+Use TOTP (Time‑Based One‑Time Password) via apps like Google Authenticator; easy to integrate with libraries.
+
+Hunting tip: Look for missing MFA on sensitive actions (e.g., password change, financial transactions). Lack of MFA on admin panels is high severity.
+
+h. Logout – Don’t Forget It
+
+Shared devices need a clean logout: clear session cookie (set blank Set-Cookie), invalidate session server‑side.
+
+If session isn’t invalidated server‑side, an attacker with the old cookie can still access the account even after “logout”.
+
+i. Preventing User Enumeration
+Attackers probe login/password‑reset forms to discover valid usernames. Defend:
+
+Generic error messages: Always say “Incorrect username or password” — never distinguish “User not found” vs “Wrong password”.
+
+Timing attacks: If password hashing only occurs for valid users, response times differ. Mitigate by hashing a fake password for non‑existent users (or always run the hash logic).
+
+Password‑reset page: Show “Check your inbox” regardless of whether email is registered. Don’t reveal existence.
+
+CAPTCHA: Use reCAPTCHA on login/password‑reset to stop automated enumeration and brute‑forcing. Not perfect but a solid deterrent.
+
+j. CAPTCHA Implementation
+
+Prevents scripts from abusing your forms. Google reCAPTCHA is the most common; easy to embed.
+
+Attackers can use ML or human farms to bypass, but it still raises the cost significantly.
+
+Hunter’s note: Test if CAPTCHA can be bypassed (missing server‑side validation, replaying a valid token, using old tokens). Also check if CAPTCHA is only on client side—that’s useless.
+
+The Hunter’s Auth Checklist (every endpoint)
+Attack Surface	What to Test
+Login form	Error message differentiation, response timing, rate limiting, lockout policy, brute‑force via leaked password lists.
+Sign‑up	Email validation bypass (disposable domains, skipping verification), weak password policy (e.g., no minimum length).
+Password reset	Token predictability, token reuse, token expiry, email enumeration via response messages, reset without the email (in‑band?).
+Logout	Session invalidation (does old cookie still work?).
+MFA	Missing MFA on sensitive actions, MFA bypass via direct endpoint access, weak TOTP seed handling.
+CAPTCHA	Client‑side only? Reusable tokens? Missing on critical forms.
+
+
+
+Attacking Third‑Party Authentication Integrations (OAuth, SSO)
+When a site uses “Log in with Google/Facebook/GitHub/Okta”, the vulnerability isn’t in Google’s own system—it’s in how the site implements the protocol. The target application mishandles tokens, redirects, or state. Here’s exactly what to look for as a bug bounty hunter.
+
+1. OAuth 2.0 – The Most Common Integration
+OAuth 2.0 uses a flow where the user is sent to the provider, approves access, and the provider sends an authorization code (or token) back to the application’s redirect_uri. The biggest mistake? Improper redirect_uri validation.
+
+Classic attack – redirect_uri hijack:
+
+The site registers a whitelist like https://victim.com/callback.
+
+If the server doesn’t validate the exact redirect URI, an attacker can craft a malicious link:
+
+text
+https://provider.com/authorize?client_id=CLIENT_ID&redirect_uri=https://attacker.com&response_type=code
+The victim clicks, approves, and the authorization code is sent to attacker.com. The attacker uses the code to log in as the victim.
+
+Variants: Test for open redirects within the victim’s domain that can be chained. If https://victim.com/callback?next=https://attacker.com works, use it as redirect_uri=https://victim.com/callback?next=https://attacker.com. The provider sees only victim.com, but the app’s own redirect then sends the code out.
+
+Checklist:
+
+Try changing redirect_uri to your own domain. If it works, critical severity.
+
+Try redirect_uri with subpath traversal: https://victim.com/callback.attacker.com (URL parsing quirks).
+
+Try redirect_uri with extra parameters: https://victim.com/callback%40attacker.com (interpreted differently by the provider vs. the app).
+
+2. CSRF on OAuth Authorization Request (Missing state)
+OAuth defines a state parameter that the app must generate and check upon return. It prevents attackers from binding their own credentials to a victim’s account.
+
+Attack (Account Pre‑Hijack):
+
+Without a valid state check, an attacker can start an OAuth login with their own provider account, get the authorization code, but then trick a victim into visiting the callback URL with the attacker’s code. The victim’s browser visits https://victim.com/callback?code=ATTACKER_CODE. The server links the attacker’s OAuth identity to the victim’s session (if session was established before login). Now the attacker can log in and take over the account.
+
+Impact: Full account takeover if the app merges the social login with an existing account based on email without confirmation, or if it creates a new account and the victim later adds an email.
+
+Test: Remove the state parameter entirely. If the callback still works, CSRF is possible. Then check if you can use your own authorization code in the victim’s context.
+
+3. Open Redirect in OAuth Callback = Code/Token Theft
+Even if redirect_uri is strictly validated, the application may have an open redirect on the callback endpoint itself. For example:
+
+text
+https://victim.com/oauth/callback?code=XXX&redirect_to=/dashboard
+If redirect_to can be set to an external site, an attacker constructs:
+
+text
+https://victim.com/oauth/callback?code=stolen&redirect_to=https://attacker.com
+The server’s own redirect will forward the authorization code to the attacker. This bypasses provider-side redirect_uri validation because the initial URI is valid.
+
+4. Implicit Flow + Leaked Access Tokens
+Some legacy implementations use the implicit grant (response_type=token), where the access token comes back in the URL fragment. If the app doesn’t properly handle the fragment, or if any script reads it and reflects it unsafely, the token can be stolen via:
+
+XSS on the callback page.
+
+Referer header leakage: if the callback page loads an external image, the token in the URL fragment can be sent in the Referer (less common now but worth checking).
+
+Open redirect after the fragment can leak the token if the app doesn’t strip it.
+
+5. Weak or Predictable Authorization Codes
+Some custom-built OAuth-like systems (or misconfigured libraries) generate short, sequential, or time‑based codes. Test by requesting multiple codes and see if you can predict or brute‑force another user’s code.
+
+6. Scope Escalation
+The scope parameter controls what the app can access (e.g., read:user, write:profile). If the application blindly accepts any scope, an attacker can increase privileges (e.g., add admin scope, or change read to write). Try adding extra scopes; check if the access token has more permissions than intended.
+
+7. Leaked Client Secrets
+OAuth 2.0 uses a client_id and client_secret. The secret must never be in client‑side code. Hunt for it:
+
+In JavaScript files.
+
+In mobile apps (reverse engineer the APK).
+
+In commit history (.git).
+
+If the secret is leaked, you can impersonate the entire application, generate arbitrary tokens, and bypass authentication completely.
+
+8. SAML (Single Sign‑On) Attacks
+If the site uses SAML (e.g., with Okta, Azure AD), classic vulnerabilities include:
+
+XML Signature Wrapping: The SAML response is signed, but the XML parser may interpret the document’s structure incorrectly. By moving the original signature and injecting a new assertion, an attacker can authenticate as any user without knowing the private key. Tools like samlraider (Burp extension) automate this.
+
+XXE in SAML parsing: If the parser allows external entities, you can read local files on the server.
+
+Missing or weak signature validation: Change the user identifier in the assertion and see if the response is still accepted.
+
+9. Post‑Binding CSRF in SAML
+SAML responses are sometimes sent via POST from the identity provider to the service provider. If the service provider doesn’t validate the RelayState or uses a predictable token, an attacker can prepare a SAML response with their own assertion and CSRF the victim into accepting it, leading to session hijacking.
+
+10. Downgrade Attacks & Provider Confusion
+If the app supports multiple identity providers, try switching the provider parameter to a less secure one (e.g., from Google to a weaker custom OAuth provider). Sometimes the app trusts any provider and doesn’t verify the token’s issuer.
+
+If the app uses both OAuth and password login, check if you can link an OAuth account to an existing email without verifying ownership of that OAuth account (pre‑hijack).
+
+Hunting Mindset: Third‑party auth doesn’t mean “can’t hack.” The integration layer is your target. Always test redirect_uri validation, state CSRF, token handling, and XML parsing. These bugs are high‑impact because they often lead to account takeover without needing any user interaction beyond a single click.
+
+Tools: Burp Suite with AuthMatrix / SAML Raider, OAuth 2.0 test playbooks from PortSwigger, manual URL manipulation.
