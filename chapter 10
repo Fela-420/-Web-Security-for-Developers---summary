@@ -1,0 +1,70 @@
+ Chapter 10 – Session Hijacking: Stealing the User’s Identity
+After login, the server issues a session ID (a random token) that the browser sends with every request. If an attacker captures or forges this token, they hijack the user’s session without needing passwords. Here’s how it works and how to hunt these flaws.
+
+1. Session Implementations
+Server‑side sessions: Session state lives on the server (memory/cache/DB). Only the session ID is passed in a cookie. Scalable via shared caches (Redis). Secure if ID is unguessable.
+
+Client‑side sessions: All state is stored in the cookie itself, typically encrypted or signed to prevent tampering. If only signed, the user can still read it (e.g., JSON stored in the cookie). If encryption is weak, an attacker can forge sessions.
+
+Hunting tip: Look for session cookies that look like Base64 or JWT tokens. If JWT, check signature algorithm confusion (none, HS256 via public key), missing expiration, and weak secrets.
+
+2. Cookie Theft – Three Attack Vectors
+Attack Vector	How It Works	Defense Cookie Attribute	Hunter’s Test
+XSS	Injected JavaScript reads document.cookie and sends it to attacker.	HttpOnly – prevents JavaScript access to the cookie.	Check if session cookie lacks HttpOnly. If yes, any XSS leads to session hijacking.
+Man‑in‑the‑Middle	Attacker intercepts HTTP traffic on an insecure network (e.g., open Wi‑Fi) and steals the cookie.	Secure – cookie only sent over HTTPS.	Check if session cookie lacks Secure. If HTTP is available, cookie can be sniffed.
+CSRF	Victim clicks a malicious link while authenticated; browser sends session cookie automatically, performing an unwanted action.	SameSite – Lax strips cookies from cross‑site POST/PUT/DELETE; Strict strips all cross‑site.	If session cookie has no SameSite, even an <img> tag can trigger state‑changing actions.
+Ideal secure cookie:
+
+text
+Set-Cookie: session_id=...; HttpOnly; Secure; SameSite=Lax
+Hunter’s checklist for each cookie:
+
+Missing HttpOnly → report as high if XSS exists, medium if not.
+
+Missing Secure → report as high if the site is accessible over HTTP.
+
+Missing SameSite → report as medium; test CSRF to confirm impact.
+
+SameSite=None without Secure → invalid (Chrome will reject it); potential misconfig to report.
+
+3. Session Fixation – Forcing a Known ID
+Occurs when: The server accepts session IDs from a URL parameter (;jsessionid=1234) or from a cookie set by an attacker (e.g., via Set-Cookie header injection).
+
+Attack flow:
+
+Attacker obtains a fresh session ID from the target site (e.g., by visiting the login page).
+Attacker tricks the victim into using that ID (via crafted URL or cookie). For example, http://victim.com/login;jsessionid=ATTACKER_ID.
+Victim logs in. The server binds the attacker’s ID to the victim’s authenticated session.
+Attacker uses the same ID and now has access to the victim’s account.
+How to test:
+
+Check if session ID can be passed via URL (before or after login). If yes, the site is vulnerable.
+
+Test cookie injection: Use a tool to set a cookie before login (e.g., session_id=test123). Log in and see if the cookie value stays the same. If it does, fixation is possible.
+
+Defense: Always regenerate the session ID after authentication. Disable URL rewriting.
+
+4. Weak Session IDs – Guessing Your Way In
+If session IDs are short, sequential, or generated with a weak PRNG, an attacker can enumerate valid IDs and hijack random users.
+
+Historical example: Older Tomcat used system time and object hashcode; researchers could predict session IDs.
+
+How to test:
+
+Collect several session IDs and analyze them.
+
+Look for patterns: are they increasing? Do they contain timestamps?
+
+Check the length: a 6‑digit number can be brute‑forced in minutes.
+
+Use Burp Sequencer to test randomness.
+
+Defense: Use a cryptographically secure random generator (e.g., SecureRandom in Java, os.urandom in Python), and make the ID at least 128 bits.
+
+5. Other Session Attacks Worth Knowing
+Session ID leakage in Referer: If an authenticated page loads an external image/script, the session ID in the URL might leak via Referer header. Not common with modern browsers but testable.
+
+Logout doesn’t invalidate: As discussed earlier, if the server doesn’t destroy the session, a stolen cookie remains valid forever. Always test post‑logout cookie reuse.
+
+Concurrent sessions allowed: A hijacked session can be used while the victim is still active. No defense against hijacking itself, but anomaly detection can help.
+
