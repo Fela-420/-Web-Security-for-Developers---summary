@@ -1,0 +1,65 @@
+Chapter 12 – Information Leaks: What Your Server Tells Attackers
+Every unnecessary detail your web server exposes is free reconnaissance for an attacker. Hackers scan for software versions, framework fingerprints, and verbose errors to quickly identify known exploits. This chapter’s six mitigations map directly to what a bug bounty hunter probes. Here’s how to find and report these leaks—and how to lock them down.
+
+1. Telltale Server Headers
+Leak: Server: Apache/2.4.41 (Ubuntu), X-Powered-By: PHP/7.2.24, X-AspNet-Version: 4.0.30319.
+
+Why it matters: An attacker instantly knows the exact version and underlying OS, then cross-references with known CVEs. A zero-day for that version? You’re a direct target.
+
+Hunter’s check: Inspect response headers (Burp Proxy, curl -I). If Server or X-Powered-By are present, it’s an informational finding. While low severity alone, combine it with outdated software → critical.
+
+Defense: Set ServerTokens Prod / ServerSignature Off in Apache; use server_tokens off; in Nginx; configure your language/framework to suppress version headers.
+
+2. Clean URLs (No File Extensions)
+Leak: URLs like https://site.com/login.php, page.asp, index.jsp immediately reveal the backend language. Older attack tools scan for .php, .aspx, .cfm to pick targets.
+
+Why it matters: A .php extension tells attackers to try PHP‑specific payloads. A .do or .action hints at Java Struts, triggering automated scanners for Log4Shell or Struts RCE.
+
+Hunter’s check: Browse the site and check for extensions. If found, document the language fingerprint. Worth noting even if no direct exploit—combines with other info to build a target profile.
+
+Defense: Use URL rewriting (mod_rewrite, Nginx rewrites, framework routing) to serve content without file extensions. Design clean RESTful URLs.
+
+3. Generic Cookie Parameters
+Leak: Session cookie named JSESSIONID (Java/Tomcat), PHPSESSID (PHP), ASP.NET_SessionId (IIS), rack.session (Ruby).
+
+Why it matters: Attack scripts (Metasploit, custom payloads) use cookie name to tailor injection or session deserialization attacks. A JSESSIONID cookie invites Java serialization exploits; PHPSESSID prompts PHP session file inclusion tests.
+
+Hunter’s check: Examine Set-Cookie headers. Note the session cookie name. Map it to a probable backend. Then probe for platform‑specific vulnerabilities (e.g., Java deserialization, PHP local file inclusion).
+
+Defense: Change the session cookie name to something generic, e.g., session, id, or a random string. In Tomcat, set <Connector sessionCookieName="SESSIONID" />; in PHP, session.name = "SESSID".
+
+4. Client‑Side Error Reporting
+Leak: Stack traces, SQL queries, file paths, framework versions displayed in error pages. Example: ActiveRecord::StatementInvalid in UsersController#show with query and backtrace.
+
+Why it matters: This is gold for hackers. A stack trace reveals exact library versions, internal path structure, and sometimes database credentials. SQL errors can confirm SQLi; framework traces pinpoint vulnerabilities (e.g., Ruby on Rails version allows RCE).
+
+Hunter’s check: Trigger errors by sending invalid parameters, large inputs, or malformed requests. Look for verbose 500 pages. Test staging/development endpoints—they often have debugging enabled. Use tools like nuclei templates for error disclosure.
+
+Defense: Set production configs to show generic error pages only. Rails: config.consider_all_requests_local = false. Django: DEBUG = False. Log errors server‑side (ELK, Splunk) for internal review.
+
+5. Minify/Obfuscate JavaScript
+Leak: Unminified JS reveals library names, versions, and sometimes API keys or internal endpoints. Comments may contain “TODO” with security‑sensitive notes.
+
+Why it matters: An attacker can identify outdated libraries (e.g., jQuery 1.2, Angular 1.4) and exploit known XSS vectors or prototype pollution. Unobfuscated source makes it easy to find business logic flaws and hidden admin paths.
+
+Hunter’s check: Review /static/js/*.js or bundled files. Look for library version comments, @license annotations, or sourceMappingURL. Search for exposed API keys or internal URLs. Use retire.js to detect vulnerable libraries.
+
+Defense: Minify and uglify JS during build (Webpack, UglifyJS). Remove source maps from production. Use a CSP to limit script execution to trusted sources.
+
+6. Sanitize Client‑Side Files (Comments & Dead Code)
+Leak: HTML comments like <!-- TODO: move admin panel to /hidden-admin -->, or <!-- Dev server: 10.0.1.5 -->, or <!-- User password: temp123 -->. Dead code in JS may reference internal endpoints.
+
+Why it matters: These are direct information disclosures. Comments often reveal staging environments, internal IPs, or hardcoded credentials. Hackers scrape comments and dead code to find hidden attack surfaces.
+
+Hunter’s check: Crawl the site and search for HTML comments (<!--), JS comments (//, /*), and hidden <input> fields. Look for IP addresses, paths, or credentials. Use gau or waybackurls to find old versions.
+
+Defense: Audit template files and HTML during code reviews. Remove development comments and dead code before deployment. Use automated scanners in CI/CD to flag sensitive patterns.
+
+The Hunter’s Leak Checklist
+Category	What to Test	Why It Matters
+Server headers	Check Server, X-Powered-By, X-AspNet-Version, etc.	Direct version → CVE match
+URL extensions	Look for .php, .aspx, .jsp, .do	Platform fingerprint → targeted attacks
+Cookie names	Note session cookie (JSESSIONID, PHPSESSID, etc.)	Server language / framework ID
+Error pages	Force 500s, invalid params, long inputs	Stack traces, paths, SQL leaks
+JavaScript	Inspect for library versions, comments, API keys	Outdated libs → known vulns
+HTML comments	Crawl all pages for <!-- ... -->	Hidden endpoints, credentials, internal IPs
