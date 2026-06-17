@@ -1,0 +1,68 @@
+ Chapter 11 – Permissions & Access Control: Breaking the Privilege Wall
+Permissions are the rules that define what a user can see or do. When they fail, attackers escalate privileges – vertically (admin access) or horizontally (access to other users’ data). This chapter covers how to implement access control correctly and how hunters find the gaps.
+
+1. Privilege Escalation Types
+Vertical escalation: Regular user becomes admin. Often via missing authorization checks on admin endpoints, or by manipulating role parameters.
+
+Horizontal escalation: User A accesses User B’s data (e.g., changing an ID in a URL). The Facebook 2018 breach (50M accounts) was horizontal – an API issued access tokens without proper permission verification.
+
+2. Access Control Design Models
+ACL (Access Control List): Each object lists which users can perform which actions (like Linux file permissions).
+
+Whitelist/Blacklist: Explicitly allow or deny access. Whitelist (default deny) is safer.
+
+RBAC (Role‑Based): Users assigned to roles; roles have policies. Complex but powerful.
+
+Ownership‑Based: Common in social media – users control their own content.
+
+Hunter’s note: No matter the model, always test if you can access resources belonging to other users or perform admin actions with a lower‑privileged account.
+
+3. Implementation – Where Bugs Creep In
+Centralize authorization logic. Scattered inline checks are easily missed.
+
+Never trust client‑supplied data (e.g., roles, permissions) beyond the session cookie. Test by modifying hidden fields or API parameters like role=admin.
+
+Common implementations: decorators (Python’s @login_required, @permission_required), inline checks (Ruby’s authorize @post).
+
+4. Testing Access Control (Hunter’s Checklist)
+IDOR (Insecure Direct Object Reference): Change numeric IDs in URLs, POST bodies, or API parameters. If /profile/123 shows your info, try /profile/124. Use Burp Intruder.
+
+Force browsing: Access admin paths like /admin, /settings, /api/admin directly.
+
+Missing authorization on HTTP methods: Try PUT/DELETE on endpoints that lack checks.
+
+Test with multiple user roles: Low‑privileged user should be blocked, not silently redirected.
+
+5. Security Through Obscurity Fails
+Never rely on hidden URLs, unguessable paths, or lack of links. Hackers use automated tools to enumerate IDs, directories, and parameters.
+
+Embargoed content (financial reports) is a prime target – always enforce time‑based access control server‑side.
+
+6. Directory Traversal – Breaking File Access Controls
+When URLs contain file paths, an attacker uses ../ sequences to escape the intended directory and read sensitive files (e.g., /etc/passwd, configuration files, source code).
+
+How to test:
+
+Find any parameter that appears to reference a file (e.g., ?file=report.pdf, ?menu=menu1).
+
+Replace with ../../../../etc/passwd or ..\..\..\windows\win.ini.
+
+Try encoded versions: %2e%2e%2f, %252e%252e%252f, Unicode variants.
+
+If the file content is returned, it’s a critical finding.
+
+Defense (for developers):
+
+Use web server’s built‑in static file serving.
+
+Serve files from a CDN/cloud storage with opaque IDs.
+
+Use indirect file references (e.g., an ID mapped to a path in a database).
+
+If stuck with direct paths, sanitize aggressively – block path separators and encoded characters.
+
+7. Audit Trails
+Log every significant user action (login, resource access, admin operations). Helps in forensic analysis.
+
+For hunters, verbose error messages or missing logs can hint at weaker access controls.
+
