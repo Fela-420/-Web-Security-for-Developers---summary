@@ -1,0 +1,127 @@
+Chapter 13 – Encryption: The Hunter’s Guide to TLS & HTTPS Weaknesses
+Encryption isn’t just a checkbox—it’s an attack surface. Misconfigurations in TLS, certificates, and HTTP headers can expose sessions, credentials, and entire accounts. This chapter equips you to find and exploit those flaws.
+
+1. The Basics: What TLS/HTTPS Protects (and What It Doesn’t)
+TLS provides: Confidentiality (data encrypted), integrity (tamper detection via MAC), and authentication (server identity via certificates).
+
+What it doesn’t protect: Metadata (IP addresses, domain names, packet sizes) and application-layer attacks (SQLi, XSS). HTTPS stops eavesdropping, not bad code.
+
+Hunter’s mindset: Even with HTTPS, you can attack the implementation—weak ciphers, certificate issues, mixed content, protocol downgrades, and missing security headers.
+
+2. The TLS Handshake – Points of Failure
+A TLS handshake negotiates:
+
+Key exchange algorithm (asymmetric) – e.g., ECDHE, RSA.
+
+Block cipher (symmetric) – e.g., AES-128-GCM, ChaCha20-Poly1305.
+
+Message authentication code (MAC) – e.g., SHA-256.
+
+Where things break:
+
+Weak cipher suites – if the server accepts RC4, 3DES, or NULL ciphers, an attacker can force a downgrade and decrypt traffic.
+
+Expired/self-signed certificates – browsers warn users, but in bug bounty, a misconfigured certificate might indicate a test/staging environment exposing production data.
+
+Missing certificate validation – if the app doesn’t verify certificates (e.g., in API integrations), you can perform MitM with a self-signed cert.
+
+Hunter’s test:
+
+Use testssl.sh or nmap --script ssl-enum-ciphers to list supported cipher suites and protocols.
+
+Look for:
+
+ssl_protocols TLSv1.0 TLSv1.1 → POODLE, BEAST, Lucky13 attacks possible.
+
+ssl_ciphers ALL:!aNULL missing !LOW:!MEDIUM or includes EXPORT grade.
+
+Anonymous ciphers (aNULL) → no server authentication needed; man-in-the-middle possible.
+
+Downgrade attacks: check for STARTTLS in non‑HTTPS services.
+
+3. Digital Certificates – Trust, but Verify
+A certificate binds a public key to a domain. Certificate Authorities (CAs) vouch for it.
+
+Exploitation vectors:
+
+Invalid certificate hostname mismatch – If the cert is for *.example.com but you’re on admin.example.com that isn’t covered, users might ignore warnings. Test if sensitive endpoints are hosted on non‑matching domains.
+
+Self‑signed certificates in production – Many internal tools accept them blindly. If you find one, you may MitM the traffic.
+
+Certificate transparency logs – These log all issued certificates. Use crt.sh to find subdomains (e.g., %.target.com). A hidden subdomain with a valid cert is a juicy target.
+
+Certificate pinning bypass – If the app pins a certificate but doesn’t verify chain correctly, you might upload a new cert and bypass pinning (mobile apps).
+
+Practical: Always inspect the certificate chain. Check if the CA is a trusted root; look for weak signature algorithms like SHA-1 (though mostly obsolete). For bug bounty, certificate misconfigurations usually are informational/low severity but can chain with other issues.
+
+4. Enabling HTTPS – Common Mistakes
+Redirects and Mixed Content:
+
+HTTP to HTTPS redirect – If the site only serves HTTPS but doesn’t redirect HTTP to HTTPS (or uses a 302 temporary redirect), an attacker can intercept the initial HTTP request. Check by browsing http://target.com and watching for 301/302.
+
+Mixed content – An HTTPS page loading scripts, images, or stylesheets over HTTP. This breaks the lock icon but also allows an active MitM to inject malicious JavaScript into those unprotected resources, leading to XSS. Test with browser dev tools (Console will show “Mixed Content” warnings). Use sslscan to find all HTTP resources included.
+
+HSTS (Strict-Transport-Security):
+
+Without HSTS, even if HTTPS is forced, the first visit over HTTP (before redirect) exposes cookies. HSTS header Strict-Transport-Security: max-age=31536000; includeSubDomains; preload tells browsers to automatically upgrade to HTTPS for future visits.
+
+Missing HSTS – Allows SSL stripping attacks (e.g., sslstrip). Tools like hstspreload.org check preload eligibility.
+
+Incomplete HSTS – If HSTS is set but missing includeSubDomains, subdomains may not be covered. Attackers can exploit a non‑HTTPS subdomain (like dev.target.com) to steal session cookies if the main domain’s cookie Domain attribute is set too broad. Test cookie scoping and HSTS coverage.
+
+Cookie Flags:
+
+Even with HTTPS, check that cookies have Secure flag. Without it, cookies can be sent over HTTP on the same domain if any page is loaded over HTTP (e.g., a mixed content resource request). That’s a critical finding.
+
+5. Attack Scenarios on HTTP/HTTPS
+The chapter describes several real‑world attacks. As a hunter, you emulate them.
+
+Wi‑Fi Hotspot / Evil Twin: Set up a rogue AP and intercept HTTP traffic. Target sites that don’t enforce HTTPS or have insecure cookie flags. Capture passwords, session cookies.
+
+VPNFilter (Router malware): Compromised routers downgrade HTTPS to HTTP. If the website lacks HSTS preload, the initial connection is vulnerable. Look for sites that respond on HTTP without redirect, or have HSTS max-age too short (e.g., 1 day).
+
+ISP injection: Comcast injected ads via HTTP. As a hunter, test for missing Content-Security-Policy or frame injection vulnerabilities. If a page has no X-Frame-Options, you could inject fake ads (clickjacking).
+
+Government MitM (false certificates): In your bug bounty scope, never attempt to obtain a fraudulent certificate. But test if the application correctly validates server certificates in backend communications (e.g., webhooks, API calls). Missing validation could allow server‑side request forgery (SSRF) to be exploited via MitM.
+
+6. TLS Session Resumption & Tracking
+TLS session IDs and session tickets allow resuming encrypted sessions. If session tickets aren’t rotated, an attacker with the ticket can resume a session even without cookies. However, this is a low‑risk, often informational issue unless combined with other flaws.
+
+Heartbleed (CVE‑2014‑0160): Old OpenSSL bug leaked private keys and session data. Test for outdated OpenSSL versions.
+
+7. Practical Testing Workflow for a Bug Bounty Hunter
+Step 1: Scan TLS Configuration
+
+bash
+testssl --parallel --protocols --cipher-per-proto --server-preference https://target.com
+Check for: SSLv2, SSLv3, TLSv1.0, TLSv1.1, weak ciphers (RC4, 3DES, export), Diffie‑Hellman keys < 2048 bits, no secure renegotiation.
+
+Step 2: Check Certificate
+
+Inspect expiration, SANs, wildcard coverage, CA chain. Use openssl s_client -connect target.com:443 -showcerts.
+
+Step 3: Test HSTS
+
+curl -I https://target.com | grep -i strict-transport-security
+
+If absent, test SSL stripping with Bettercap: bettercap -eval "set arp.spoof.targets 192.168.1.5; arp.spoof on; net.sniff on" while victim visits HTTP version.
+
+Step 4: Mixed Content & Insecure References
+
+Use Burp Suite’s “Search” to find http:// in responses. Report as “mixed content – script/style”. If script is loaded over HTTP, it’s a high‑severity active MitM XSS.
+
+Step 5: Cookie Security
+
+Confirm session cookie has Secure and HttpOnly. If not on an HTTPS site, report (medium/high).
+
+Step 6: Exploit Downgrade / Lack of HTTPS
+
+If the site accepts HTTP on any sensitive page (login, account settings), try to steal credentials via a captive portal attack (in a controlled test environment). Show impact: capture password in cleartext.
+
+8. Summary of High‑Impact Findings
+Vulnerability	Test	Impact
+Missing HTTPS on sensitive pages	Request login over HTTP	Credential theft via sniffing
+Weak ciphers / protocol	TLSv1.0 or RC4 enabled	Decryption of captured traffic (POODLE)
+Missing HSTS	No Strict-Transport-Security header	SSL stripping, cookie hijack
+Mixed active content	<script src="http://..."> on HTTPS page	XSS via MitM
+Cookie without Secure flag	Set-Cookie: sess=.. without Secure	Session theft over any HTTP subresource
