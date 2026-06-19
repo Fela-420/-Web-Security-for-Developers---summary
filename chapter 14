@@ -1,0 +1,55 @@
+Chapter 14 – Third‑Party Code: Hunting Hidden Risks in Other People’s Software
+Third‑party code is everywhere—dependencies, CDNs, ad networks, configuration defaults. Attackers scan for known vulnerabilities and misconfigurations. This chapter equips you to find and exploit those weaknesses.
+
+1. Dependency Management – Know What’s Running
+The risk: Outdated libraries with known CVEs. Heartbleed (OpenSSL) left 500k+ sites vulnerable overnight.
+
+Hunter’s approach:
+
+Fingerprint versions: Check JavaScript files, package.json, composer.json, Gemfile.lock, requirements.txt if exposed. Look for version numbers in comments or source maps (.map files).
+
+Identify dependency tree: Use npm list, pip freeze equivalent if you gain code access. Find sub‑dependencies that may be vulnerable.
+
+Check for known CVEs: Use tools like snyk, retire.js, OWASP Dependency-Check. Search for CVE numbers in public databases.
+
+Integrity checks: Look for integrity attribute on <script> and <link> tags. If missing, a compromised CDN could serve malicious code. Test by modifying the script and see if browser rejects it.
+
+2. Configuration Weaknesses – Defaults Are the Enemy
+Default credentials: Many CMS, databases, and admin panels ship with default logins (e.g., admin/admin, root/toor). Try them on any login form.
+
+Open directory listings: Access https://target.com/directory/ and see if Apache/Nginx lists files. Look for Index of /... pages. Search for sensitive files: .git, .env, backups (.bak, .sql), keys.
+
+Configuration files leaked: Look for .env, config.js, wp-config.php, web.config in exposed directories or via forced browsing. They may contain API keys, database passwords.
+
+Subdomain takeover: Find CNAME records pointing to cloud services (AWS S3, Azure, GitHub Pages) that are unclaimed. Use tools like subfinder, dnsrecon. Claim the dangling service and host a proof-of-concept page under the target’s subdomain → critical finding.
+
+Test environments: Often less secure, with verbose errors and weaker passwords. Find staging domains via staging.target.com, dev.target.com, beta.target.com, or via certificate transparency. Access internal admin panels without authentication.
+
+3. API Keys & Webhooks – Leaked Secrets
+API keys in client‑side code: Search JavaScript files, HTML comments, and source maps for api_key, secret, token, authorization. Use regex like ['\"](?:\w+_)?(?:api[_-]?key|access[_-]?token|secret)['\"]\s*:\s*['\"][a-zA-Z0-9_\-\.]+ with tools like truffleHog, git‑secrets.
+
+Public vs. private keys: If a key meant for server‑side only appears in the frontend, report immediately. Check privileges: try to use the key for sensitive operations (e.g., file deletion, user data access).
+
+Webhooks without authentication: Set up a webhook listener (e.g., Burp Collaborator, webhook.site) and send fake events. If the target’s webhook processes calls without verifying a signature/secret, you can trigger actions (e.g., payment confirmations, email sending). Test by forging JSON payloads.
+
+4. Malvertising & Third‑Party Client‑Side Code
+Malvertising risks: Ads can contain drive‑by downloads, cryptominers, or redirects. While you can’t hack the ad network directly, you can check if the target uses SafeFrame or iframes to isolate ads.
+
+Testing: View page source. Search for ad scripts (adsbygoogle, googlesyndication). Check if ads are loaded in <iframe sandbox>. If not, an ad could access the main page’s DOM → potential XSS/credential theft. Report lack of isolation as a weakness.
+
+Third‑party JavaScript: Any <script src="..."> from an external domain can read/modify the entire DOM. If the CDN or script provider gets compromised, your users are at risk. Suggest using subresource integrity (SRI) and limiting external scripts to essential ones.
+
+Expired domains in ad networks: Old ad network domains may be re‑registered by attackers. While this is harder to test, you can check DNS records for CNAMEs pointing to ad services that no longer exist (like cdn.oldadnetwork.com). Similar to subdomain takeover.
+
+5. Quick Win: Google Dorking
+Use search operators to find insecure configurations on the target or its infrastructure:
+
+site:target.com intitle:"Index of" – open dirs
+
+site:target.com ext:sql – database dumps
+
+site:target.com inurl:wp-config.php – WordPress config
+
+site:target.com ext:env – environment files
+
+Apply to bug bounty: find exposed sensitive info and report
